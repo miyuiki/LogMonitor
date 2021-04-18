@@ -33,10 +33,12 @@ function Get-MatchCnt {
         $Path,
         $StartLine
     )
-    $Match = Select-String -Path $Path -Pattern $Pattern | Where-Object {$_.LineNumber -gt $StartLine}
+    $Log = Get-Content -Path $Path | Measure-Object
+    $Match = Get-Content -Path $Path -Tail ($Log.Count - $StartLine) | Select-String -Pattern $Pattern
+    # $Match = Select-String -Path $Path -Pattern $Pattern | Where-Object {$_.LineNumber -gt $StartLine}
     return $Match.Length
 }
-function Get-ParsingEnd {
+function Get-LastParsingEnd {
     if (!(Test-Path .\LineRecord.txt)) {
         New-Item -Path .\ -Name LineRecord.txt -type "file" -value "0"
         return 0
@@ -67,20 +69,35 @@ function Get-UnUpdateMaxTime {
 }
 
 function Update-Par {
-    
+    param(
+        $Path,
+        [hashtable]$KpiValueDict,
+        $Value
+    )
+    if (!(Test-Path $Path)) {
+        New-Item -Path $Path -type "file"
+    }
+    Clear-Content -Path $Path
+    $KpiValueDict.GetEnumerator() | ForEach-Object{
+        Out-File -InputObject "$($System)_WS:$($_.Key)=$($_.Value)" -FilePath $Path -Append
+    }
 }
 #Default is http://127.0.0.1:8080/health
 # Test-ServiceAlive -Url "http://140.115.53.158:9527"
 # Update-ParsingEnd
 Set-Location -Path D:\LogMonitor
 $ini = Get-IniContent -Path .\LogParser.ini
-$LogPath = Join-Path $ini.FileLocation.LogDirectory -ChildPath "AFTS_20210402.log"
+$System = $ini.System.System
+$LogPath = $ini.FileLocation.LogPath
+$ParPath = $ini.FileLocation.ParPath
 $Patterns = $ini.Pattern
-$ParsingEnd = Get-ParsingEnd
+$KpiValueDict = @{}
+$ParsingEnd = Get-LastParsingEnd
 $Patterns.GetEnumerator() | ForEach-Object{
-    $count = Get-MatchCnt -Pattern $_.value -Path $LogPath -StartLine 0
-    $message = '{0} appear {1} times' -f $_.key, $count
-    Write-Output $message
+    $Count = Get-MatchCnt -Pattern $_.value -Path $LogPath -StartLine $ParsingEnd
+    $KpiValueDict.Add($_.key, $Count)
 }
-# Get-MatchCnt -Pattern "loaded" -Path $LogPath -StartLine $ParsingEnd
-# Update-ParsingEnd -Path $LogPath
+Update-ParsingEnd -Path $LogPath
+$ServiceAlive = Test-ServiceAlive -Url "http://140.115.53.158:9527"
+$KpiValueDict.Add("ServiceAlive", $ServiceAlive)
+Update-Par -Path $ParPath -System $System -KpiValueDict $KpiValueDict
